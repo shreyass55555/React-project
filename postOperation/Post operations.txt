@@ -1,0 +1,112 @@
+Post operation
+// App.js
+
+import React, { useState } from 'react';
+import axios from 'axios';
+
+function App() {
+  const [name, setName] = useState('');
+  const [id, setId] = useState('');
+  const [salary, setSalary] = useState('');
+  const [message, setMessage] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await axios.post('http://localhost:8080/api/data', { name, id: parseInt(id), salary:parseInt(salary) }); // Convert id to integer
+      setMessage('Data inserted successfully!');
+    } catch (error) {
+      setMessage('Error inserting data: ' + error.response.data.error);
+    }
+  };
+
+  return (
+    <div>
+      <h1>Insert Data into ScyllaDB Table</h1>
+      <form onSubmit={handleSubmit}>
+        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" required />
+        <input type="number" value={id} onChange={(e) => setId(e.target.value)} placeholder="ID" required />
+        <input type="number" value={salary} onChange={(e) => setSalary(e.target.value)} placeholder="Salary" required />
+        <button type="submit">Submit</button>
+      </form>
+      <p>{message}</p>
+    </div>
+  );
+}
+
+export default App;
+
+--------------------------------------------------------------------------
+// main.go
+
+package main
+
+import (
+	"log"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"github.com/gocql/gocql"
+)
+
+var session *gocql.Session
+
+type inputData struct {
+	Name   string `json:"name" binding:"required"`
+	ID     int    `json:"id" binding:"required"`
+	Salary int    `json:"salary" binding:"required"`
+}
+
+func main() {
+	// Connect to ScyllaDB cluster
+	cluster := gocql.NewCluster("127.0.0.1")
+	cluster.Keyspace = "my_keyspace"
+	var err error
+	session, err = cluster.CreateSession()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer session.Close()
+
+	// Initialize Gin router
+	router := gin.Default()
+
+	// Enable CORS
+	router.Use(func(c *gin.Context) {
+		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
+
+		c.Next()
+	})
+
+	// Define API endpoint to insert data
+	router.POST("/api/data", insertData)
+
+	// Run the server
+	router.Run(":8080")
+}
+
+func insertData(c *gin.Context) {
+	// Parse JSON request body
+	var data inputData
+	if err := c.ShouldBindJSON(&data); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Insert data into ScyllaDB table
+	if err := session.Query("INSERT INTO input (name, id, salary) VALUES (?, ?, ?)",
+		data.Name, data.ID, data.Salary).Exec(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Data inserted successfully"})
+}
